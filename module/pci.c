@@ -147,6 +147,8 @@ static long map_ioctl(struct file* file, unsigned int cmd, unsigned long arg)
                 retval = PTR_ERR(map);
             }
             break;
+#else
+#error "cuda not defined"
 #endif
 
         case NVM_UNMAP_MEMORY:
@@ -175,8 +177,8 @@ static long map_ioctl(struct file* file, unsigned int cmd, unsigned long arg)
             break;
 
         default:
-            printk(KERN_NOTICE "Unknown ioctl command from process %d: %u\n",
-                    current->pid, cmd);
+            printk(KERN_NOTICE "Unknown ioctl command from process %d: %0x size of request %lu\n",
+                    current->pid, cmd, sizeof(struct nvm_ioctl_map));
             retval = -EINVAL;
             break;
     }
@@ -328,7 +330,7 @@ static int __init libnvm_helper_entry(void)
     }
 
     // Create character device class
-    dev_class = class_create(THIS_MODULE, DRIVER_NAME);
+    dev_class = class_create(DRIVER_NAME);
     if (IS_ERR(dev_class))
     {
         unregister_chrdev_region(dev_first, max_num_ctrls);

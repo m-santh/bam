@@ -1,4 +1,4 @@
-cmake_minimum_required (VERSION 3.1)
+cmake_minimum_required (VERSION 3.5)
 project (libnvm LANGUAGES CUDA C CXX)
 
 set (CMAKE_C_STANDARD 99)
@@ -6,16 +6,19 @@ set (CMAKE_CXX_STANDARD 11)
 
 set (THREADS_PREFER_PTHREAD_FLAG ON)
 find_package (Threads REQUIRED)
-find_package (CUDA 8.0)
+#find_package (CUDA 8.0)
+find_package (CUDAToolkit REQUIRED)
 
 
 
 set (DIS "/opt/DIS" CACHE PATH "SISCI install location")
-set (NVIDIA "" CACHE PATH "Path to Nvidia driver source")
+set (NVIDIA "//usr/src/nvidia-595.71.05/nvidia/" CACHE PATH "/usr/src/nvidia-595.71.05/nvidia/" FORCE)
 set (KERNEL "/lib/modules/${CMAKE_SYSTEM_VERSION}/build" CACHE PATH "Path to kernel source, or module directory")
 set (FIO "" CACHE PATH "Path to FIO installation")
 
-set (nvidia_archs "70;80;90" CACHE STRING "NVIDIA compute architectures")
+message (STATUS " NVIDIA ${NVIDIA}")
+
+set (nvidia_archs "120" CACHE STRING "NVIDIA compute architectures")
 set (no_smartio_samples true CACHE BOOL "Do not use SISCI for examples")
 set (no_smartio_benchmarks true CACHE BOOL "Do not use SISCI for benchmarks")
 set (no_smartio true CACHE BOOL "Do not use SISCI for library or examples")
@@ -58,17 +61,21 @@ endif ()
 
 
 # Try to find Nvidia driver
-if (CUDA_FOUND AND NOT no_cuda)
+if (CUDAToolkit_FOUND AND NOT no_cuda)
 
     # Try to find Nvidia headers (will choose the newest version)
-    file (GLOB_RECURSE driver_paths "/usr/src/nvidia-*/nv-p2p.h")
+    #file (GLOB_RECURSE driver_paths "/usr/src/nvidia-*/nv-p2p.h")
+    file (GLOB_RECURSE driver_paths "${NVIDIA}/nvidia/nv-p2p.h")
     string (REPLACE "nv-p2p.h" "" driver_paths "${driver_paths}")
     if (driver_paths)
         list (REVERSE driver_paths)
     endif ()
 
-    find_path (driver_include NAMES "nv-p2p.h" PATHS "${NVIDIA}" ${driver_paths})
+    message (STATUS " driver_paths ${driver_paths} ${NVIDIA}")
+    #find_path (driver_include NAMES "nv-p2p.h" PATHS "${NVIDIA}" ${driver_paths})
+    find_path (driver_include NAMES "nv-p2p.h" PATHS "${driver_paths}" )
     set (driver_dir "${driver_include}")
+    message (STATUS " driver_dur ${driver_dir}")
 
     # Find Nvidia driver symbols
     if (NOT EXISTS "${driver_dir}/Module.symvers")
@@ -107,6 +114,7 @@ file (GLOB libnvm_include "${PROJECT_BINARY_DIR}/include/*.h" "${PROJECT_SOURCE_
 # Module source files
 set (module_root "${PROJECT_SOURCE_DIR}/module")
 file (GLOB module_source "${module_root}/*.c")
+file (GLOB module_srcs "${module_root}/*.[ch]")
 
 # FIO source files
 set (fio_root "${PROJECT_SOURCE_DIR}/fio")
@@ -126,19 +134,23 @@ set (CMAKE_RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/bin")
 set (module_output "${CMAKE_BINARY_DIR}/module")
 set (fio_output "${CMAKE_BINARY_DIR}/fio")
 
-
+foreach(src ${module_srcs})
+  get_filename_component(name "${src}" NAME)
+  configure_file("${src}" "${module_output}/${name}" COPYONLY)
+endforeach()
 
 # Set include directories
-include_directories ("${PROJECT_BINARY_DIR}/include" "${PROJECT_SOURCE_DIR}/include" "${PROJECT_SOURCE_DIR}/include/freestanding/include")
+include_directories ("${PROJECT_BINARY_DIR}/include" "${CMAKE_CURRENT_SOURCE_DIR}/include" "${CMAKE_CURRENT_SOURCE_DIR}/include/freestanding/include")
 if (sisci_include)
     include_directories ("${PROJECT_BINARY_DIR}/include" "${PROJECT_SOURCE_DIR}/include" "${sisci_include}" "${sisci_include}/dis")
 endif ()
 
 
 # Create NVME library target
-CUDA_ADD_LIBRARY (libnvm ${libnvm_source} ${libnvm_linux_source}) # TODO: add check for OS
-target_include_directories (libnvm PRIVATE "${libnvm_root}")
-target_link_libraries(libnvm ${CUDA_LIBRARIES})
+#CUDA_ADD_LIBRARY (libnvm ${libnvm_source} ${libnvm_linux_source}) # TODO: add check for OS
+add_library (libnvm ${libnvm_source} ${libnvm_linux_source}) # TODO: add check for OS
+target_include_directories (libnvm PRIVATE "${libnvm_root}" ${CUDAToolkit_INCLUDE_DIRS})
+target_link_libraries(libnvm CUDA::cudart)
 
 if (sisci_include AND sisci_lib AND NOT no_smartio)
     target_sources (libnvm PRIVATE ${libnvm_dis_source})
@@ -154,7 +166,7 @@ endif ()
 
 
 
-if (CUDA_FOUND AND NOT no_cuda)
+if (CUDAToolkit_FOUND AND NOT no_cuda)
     target_compile_definitions(libnvm PRIVATE _CUDA __CUDA__)
 endif ()
 
@@ -170,7 +182,7 @@ install (TARGETS libnvm DESTINATION "lib")
 
 # Create kernel module makefile
 if (NOT no_module)
-    if (CUDA_FOUND AND NOT no_cuda AND EXISTS "${driver_dir}/Module.symvers")
+    if (CUDAToolkit_FOUND AND NOT no_cuda AND EXISTS "${driver_dir}/Module.symvers")
         set (module_ccflags "-D_CUDA -I${driver_include} -I${libnvm_root} -I${libnvm_root}/linux")
         set (module_symbols "${driver_dir}/Module.symvers")
         message(STATUS "Configuring kernel module with CUDA")
@@ -251,7 +263,7 @@ endmacro ()
 # Make benchmark target
 # We assume all benchmarks are CUDA programs
 macro (make_benchmark target binary_name files)
-    if (CUDA_FOUND AND NOT no_cuda)
+    if (CUDAToolkit_FOUND AND NOT no_cuda)
         cuda_add_executable (${target} EXCLUDE_FROM_ALL ${files} OPTIONS ${GPU_ARCHS} -D__CUDA__) # Ugly bugly
         target_compile_definitions (${target} PRIVATE __CUDA__)
 
@@ -266,7 +278,7 @@ macro (make_benchmark target binary_name files)
 endmacro ()
 
 macro (make_sisci_benchmark target binary_name files)
-    if (CUDA_FOUND AND NOT no_cuda AND sisci_include AND sisci_lib AND NOT (no_smartio OR no_smartio_benchmarks))
+    if (CUDAToolkit_FOUND AND NOT no_cuda AND sisci_include AND sisci_lib AND NOT (no_smartio OR no_smartio_benchmarks))
         cuda_add_executable (${target} ${files} EXCLUDE_FROM_ALL OPTIONS ${GPU_ARCHS} -D__CUDA__ -D__DIS_CLUSTER__ -D_REENTRANT)
         target_compile_definitions(${target} PRIVATE __DIS_CLUSTER__ __CUDA__ _REENTRANT)
 
@@ -317,7 +329,7 @@ if (NOT no_fio AND sisci_include AND sisci_lib)
 endif ()
 
 # Add individual benchmarks
-if (CUDA_FOUND AND NOT no_cuda)
+if (CUDAToolkit_FOUND AND NOT no_cuda)
   add_subdirectory ("${benchmarks_root}/array")
   add_subdirectory ("${benchmarks_root}/iodepth-block")
   add_subdirectory ("${benchmarks_root}/block")
