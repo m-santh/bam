@@ -120,6 +120,23 @@ static void initializeController(struct Controller& ctrl, uint32_t ns_id)
     {
         throw error(nvm_strerror(status));
     }
+
+    // HOL-WRR: if WRR was selected at enable (BAM_WRR), skew the arbitration
+    // weights so the High class drains far more credits than Low per round.
+    // Defaults HPW=0xFF, MPW=0x08, LPW=0x01, AB=0; override via BAM_WRR_{HPW,MPW,LPW,AB}.
+    {
+        const char* w = getenv("BAM_WRR");
+        if (w != NULL && atoi(w) != 0)
+        {
+            uint8_t hpw = 0xFF, mpw = 0x08, lpw = 0x01, ab = 0;
+            const char* s;
+            if ((s = getenv("BAM_WRR_HPW"))) hpw = (uint8_t) strtoul(s, 0, 0);
+            if ((s = getenv("BAM_WRR_MPW"))) mpw = (uint8_t) strtoul(s, 0, 0);
+            if ((s = getenv("BAM_WRR_LPW"))) lpw = (uint8_t) strtoul(s, 0, 0);
+            if ((s = getenv("BAM_WRR_AB")))  ab  = (uint8_t) strtoul(s, 0, 0);
+            nvm_admin_set_arbitration(ctrl.aq_ref, hpw, mpw, lpw, ab);
+        }
+    }
 }
 
 
@@ -182,9 +199,18 @@ inline Controller::Controller(const char* path, uint32_t ns_id, uint32_t cudaDev
     printf("SQs: %d\tCQs: %d\tn_qps: %d\n", n_sqs, n_cqs, n_qps);
     h_qps = (QueuePair**) malloc(sizeof(QueuePair)*n_qps);
     cuda_err_chk(cudaMalloc((void**)&d_qps, sizeof(QueuePair)*n_qps));
+    // HOL-WRR: when WRR is on, map the demand/speculative SQ split onto hardware
+    // priority. Demand SQs [0,BAM_DEMAND_QS) = High, speculative SQs = Low. This
+    // MUST match the app's HOL_DEMAND_QS (hol_pick_queue uses the same split).
+    // Default (env unset) keeps prio=0 (Urgent) = prior behaviour (ignored under RR).
+    int hol_wrr = (getenv("BAM_WRR") != NULL && atoi(getenv("BAM_WRR")) != 0);
+    int hol_dqs = getenv("BAM_DEMAND_QS") ? atoi(getenv("BAM_DEMAND_QS")) : 0;
     for (size_t i = 0; i < n_qps; i++) {
         //printf("started creating qp\n");
-        h_qps[i] = new QueuePair(ctrl, cudaDevice, ns, info, aq_ref, i+1, queueDepth);
+        uint8_t sq_prio = NVM_SQ_PRIO_URGENT;
+        if (hol_wrr && hol_dqs > 0)
+            sq_prio = (i < (size_t) hol_dqs) ? NVM_SQ_PRIO_HIGH : NVM_SQ_PRIO_LOW;
+        h_qps[i] = new QueuePair(ctrl, cudaDevice, ns, info, aq_ref, i+1, queueDepth, sq_prio);
         //printf("finished creating qp\n");
         cuda_err_chk(cudaMemcpy(d_qps+i, h_qps[i], sizeof(QueuePair), cudaMemcpyHostToDevice));
     }

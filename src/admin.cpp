@@ -36,13 +36,15 @@ static void admin_cq_delete(nvm_cmd_t* cmd, const nvm_queue_t* cq)
 
 
 
-static void admin_sq_create(nvm_cmd_t* cmd, const nvm_queue_t* sq, const nvm_queue_t* cq, uint64_t ioaddr, bool need_prp = false)
+static void admin_sq_create(nvm_cmd_t* cmd, const nvm_queue_t* sq, const nvm_queue_t* cq, uint64_t ioaddr, bool need_prp = false, uint8_t prio = 0)
 {
     nvm_cmd_header(cmd, 0, NVM_ADMIN_CREATE_SQ, 0);
     nvm_cmd_data_ptr(cmd, ioaddr, 0);
 
+    // CDW11: [31:16]=CQID  [2:1]=QPRIO (0=Urgent,1=High,2=Medium,3=Low; honoured
+    // only under WRR)  [0]=PC. prio defaults to 0 (Urgent) = prior behaviour.
     cmd->dword[10] = (((uint32_t) sq->qs - 1) << 16) | sq->no;
-    cmd->dword[11] = (((uint32_t) cq->no) << 16) | (0x00 << 1) | (!need_prp);
+    cmd->dword[11] = (((uint32_t) cq->no) << 16) | ((((uint32_t) prio) & 0x3) << 1) | (!need_prp);
 }
 
 
@@ -61,6 +63,18 @@ static void admin_current_num_queues(nvm_cmd_t* cmd, bool set, uint16_t n_cqs, u
 
     cmd->dword[10] = (0x00 << 8) | 0x07;
     cmd->dword[11] = set ? ((n_cqs - 1) << 16) | (n_sqs - 1) : 0;
+}
+
+
+
+// HOL-WRR: Set-Features, Feature ID 01h (Arbitration). CDW11 =
+// [31:24]HPW [23:16]MPW [15:8]LPW [2:0]AB. Weights are 0-based (value+1 credits).
+static void admin_set_arbitration(nvm_cmd_t* cmd, uint8_t hpw, uint8_t mpw, uint8_t lpw, uint8_t ab)
+{
+    nvm_cmd_header(cmd, 0, NVM_ADMIN_SET_FEATURES, 0);
+    nvm_cmd_data_ptr(cmd, 0, 0);
+    cmd->dword[10] = 0x01;
+    cmd->dword[11] = ((uint32_t) hpw << 24) | ((uint32_t) mpw << 16) | ((uint32_t) lpw << 8) | (ab & 0x7);
 }
 
 
@@ -334,7 +348,7 @@ int nvm_admin_cq_delete(nvm_aq_ref ref, nvm_queue_t* cq)
 
 
 
-int nvm_admin_sq_create(nvm_aq_ref ref, nvm_queue_t* sq, const nvm_queue_t* cq, uint16_t id, const nvm_dma_t* dma, size_t offset, size_t qs, bool need_prp)
+int nvm_admin_sq_create(nvm_aq_ref ref, nvm_queue_t* sq, const nvm_queue_t* cq, uint16_t id, const nvm_dma_t* dma, size_t offset, size_t qs, bool need_prp, uint8_t prio)
 {
     int err;
     nvm_cmd_t command;
@@ -398,7 +412,7 @@ int nvm_admin_sq_create(nvm_aq_ref ref, nvm_queue_t* sq, const nvm_queue_t* cq, 
 
     memset(&command, 0, sizeof(command));
     memset(&completion, 0, sizeof(completion));
-    admin_sq_create(&command, &queue, cq, dma->ioaddrs[offset], need_prp);
+    admin_sq_create(&command, &queue, cq, dma->ioaddrs[offset], need_prp, prio);
 
     err = nvm_raw_rpc(ref, &command, &completion);
     if (!nvm_ok(err))
@@ -474,6 +488,24 @@ int nvm_admin_get_num_queues(nvm_aq_ref ref, uint16_t* n_cqs, uint16_t* n_sqs)
 int nvm_admin_set_num_queues(nvm_aq_ref ref, uint16_t n_cqs, uint16_t n_sqs)
 {
     return nvm_admin_request_num_queues(ref, &n_cqs, &n_sqs);
+}
+
+
+
+int nvm_admin_set_arbitration(nvm_aq_ref ref, uint8_t hpw, uint8_t mpw, uint8_t lpw, uint8_t ab)
+{
+    nvm_cmd_t command;
+    nvm_cpl_t completion;
+    memset(&command, 0, sizeof(command));
+    memset(&completion, 0, sizeof(completion));
+    admin_set_arbitration(&command, hpw, mpw, lpw, ab);
+    int err = nvm_raw_rpc(ref, &command, &completion);
+    if (err != 0)
+    {
+        dprintf("Failed to set arbitration feature: %s\n", nvm_strerror(err));
+        return err;
+    }
+    return NVM_ERR_PACK(NULL, 0);
 }
 
 

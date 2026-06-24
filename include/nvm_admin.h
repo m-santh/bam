@@ -86,6 +86,12 @@ int nvm_admin_cq_delete(nvm_aq_ref ref, nvm_queue_t* cq);
  *
  * If qs is 0, the API will use one page for queue memory.
  */
+/* HOL-WRR: NVMe SQ priority classes (Create I/O SQ, CDW11 QPRIO). */
+enum nvm_sq_prio { NVM_SQ_PRIO_URGENT = 0, NVM_SQ_PRIO_HIGH = 1, NVM_SQ_PRIO_MEDIUM = 2, NVM_SQ_PRIO_LOW = 3 };
+
+/* HOL-WRR: program the WRR arbitration weights (Set-Features 01h). */
+int nvm_admin_set_arbitration(nvm_aq_ref ref, uint8_t hpw, uint8_t mpw, uint8_t lpw, uint8_t ab);
+
 int nvm_admin_sq_create(nvm_aq_ref ref,                 // AQ pair reference
                         nvm_queue_t* sq,                // SQ descriptor
                         const nvm_queue_t* cq,          // Descriptor to paired CQ
@@ -93,7 +99,8 @@ int nvm_admin_sq_create(nvm_aq_ref ref,                 // AQ pair reference
                         const nvm_dma_t* dma,           // Queue memory handle
                         size_t page_offset,             // Number of pages to offset into the handle
                         size_t qs,                      // Number of pages to use
-                        bool need_prp = false);                 // non-contiguous queue
+                        bool need_prp = false,                  // non-contiguous queue
+                        uint8_t prio = 0);                      // HOL-WRR SQ priority (0=Urgent,1=High,2=Medium,3=Low; honoured only under WRR)
 
 
 

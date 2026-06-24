@@ -247,7 +247,16 @@ int nvm_raw_ctrl_reset(const nvm_ctrl_t* ctrl, uint64_t acq_addr, uint64_t asq_a
     // Set CC.MPS to pagesize and CC.EN to 1
     uint32_t cqes = encode_entry_size(sizeof(nvm_cpl_t)); 
     uint32_t sqes = encode_entry_size(sizeof(nvm_cmd_t)); 
-    *cc = CC$IOCQES(cqes) | CC$IOSQES(sqes) | CC$MPS(encode_page_size(ctrl->page_size)) | CC$CSS(0) | CC$EN(1);
+    // HOL-WRR: select Weighted-Round-Robin-with-Urgent (CC.AMS=001) iff the
+    // controller advertises it (CAP.AMS bit 17) and the user opted in (BAM_WRR).
+    // AMS latches at enable, so it must be part of THIS write. Default (env unset
+    // or unsupported) keeps AMS=0 = Round Robin, i.e. stock behaviour.
+    uint32_t ams = 0;
+    {
+        const char* w = getenv("BAM_WRR");
+        if (w != NULL && atoi(w) != 0 && (CAP$AMS(ctrl->mm_ptr) & 0x1)) ams = 1;
+    }
+    *cc = CC$IOCQES(cqes) | CC$IOSQES(sqes) | CC$MPS(encode_page_size(ctrl->page_size)) | CC$CSS(0) | CC$AMS(ams) | CC$EN(1);
     std::atomic_thread_fence(std::memory_order_seq_cst);
     // Wait for CSTS.RDY to transition from 0 to 1
     remaining = _nvm_delay_remain(timeout);
@@ -263,6 +272,9 @@ int nvm_raw_ctrl_reset(const nvm_ctrl_t* ctrl, uint64_t acq_addr, uint64_t asq_a
 
         remaining = _nvm_delay_remain(remaining);
     }
+
+    fprintf(stderr, "[WRR] CAP.AMS=0x%lx supported=%d ams_selected=%u\n",
+           (unsigned long)CAP$AMS(ctrl->mm_ptr), (int)(CAP$AMS(ctrl->mm_ptr)&0x1), ams);
 
     //uint64_t asqaddr = *asq;
     //uint64_t acqaddr = *acq;

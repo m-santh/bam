@@ -21,6 +21,7 @@
 #define CAP$DSTRD(p)    _RB(*CAP(p), 35, 32)    // Doorbell Stride
 #define CAP$TO(p)       _RB(*CAP(p), 31, 24)    // Timeout
 #define CAP$CQR(p)      _RB(*CAP(p), 16, 16)    // Contiguous Queues Required
+#define CAP$AMS(p)      _RB(*CAP(p), 18, 17)    // Arbitration Mechanism Supported (bit17 = WRR with Urgent)
 #define CAP$MQES(p)     _RB(*CAP(p), 15,  0)    // Maximum Queue Entries Supported
 
 #define CSTS$RDY(p)     _RB(*CSTS(p), 0,  0)    // Ready indicator
@@ -32,6 +33,7 @@
 #define CC$MPS(v)       _WB(v, 10,  7)          // Memory Page Size
 #define CC$CSS(v)       _WB(0,  3,  1)          // IO Command Set Selected (0=NVM Command Set)
 #define CC$EN(v)        _WB(v,  0,  0)          // Enable
+#define CC$AMS(v)       _WB(v, 13, 11)          // Arbitration Mechanism Selected (001 = WRR with Urgent)
 
 #define AQA$ACQS(v)     _WB(v, 27, 16)          // Admin Completion Queue Size
 #define AQA$ASQS(v)     _WB(v, 11,  0)          // Admin Submission Queue Size
