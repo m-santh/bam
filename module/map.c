@@ -114,10 +114,17 @@ static void release_user_pages(struct map* map)
     }
 
     pages = (struct page**) map->data;
+#if LINUX_VERSION_CODE > KERNEL_VERSION(5, 8, 17)
+    /* Pages were acquired with pin_user_pages() (FOLL_PIN); release with the
+     * matching unpin API. Using put_page() on FOLL_PIN pages corrupts the
+     * pin refcount and trips the kernel's pin-vs-ref accounting. */
+    unpin_user_pages(pages, map->n_addrs);
+#else
     for (i = 0; i < map->n_addrs; ++i)
     {
         put_page(pages[i]);
     }
+#endif
 
     kvfree(map->data);
     map->data = NULL;
@@ -150,7 +157,17 @@ static long map_user_pages(struct map* map)
 #elif LINUX_VERSION_CODE <= KERNEL_VERSION(5, 8, 17)
     retval = get_user_pages(map->vaddr, map->n_addrs, FOLL_WRITE, pages, NULL);
 #else
-    retval = get_user_pages(map->vaddr, map->n_addrs, FOLL_WRITE | FOLL_FORCE, pages);
+    /* Pin user pages for long-term NVMe DMA. Since kernel 5.6 the correct API is
+     * pin_user_pages() (sets FOLL_PIN, so the pages are marked DMA-pinned and
+     * fork/KSM/migration handle them correctly); FOLL_LONGTERM migrates pages out
+     * of ZONE_MOVABLE/CMA before pinning, avoiding DMA-into-relocated-memory
+     * corruption that plain get_user_pages() risks under memory pressure.
+     * FOLL_FORCE (ptrace-style write to read-only VMAs) is wrong for DMA buffers
+     * and dropped. Still requires mmap_lock held on >=5.8 (6.14 asserts).
+     * Released via unpin_user_pages() (NOT put_page) — see release_user_pages(). */
+    mmap_read_lock(current->mm);
+    retval = pin_user_pages(map->vaddr, map->n_addrs, FOLL_WRITE | FOLL_LONGTERM, pages);
+    mmap_read_unlock(current->mm);
 #endif
     if (retval <= 0)
     {

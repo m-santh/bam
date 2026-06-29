@@ -12,7 +12,7 @@ find_package (CUDAToolkit REQUIRED)
 
 
 set (DIS "/opt/DIS" CACHE PATH "SISCI install location")
-set (NVIDIA "//usr/src/nvidia-595.71.05/nvidia/" CACHE PATH "/usr/src/nvidia-595.71.05/nvidia/" FORCE)
+set (NVIDIA "/usr/src/nvidia-595.71.05/nvidia/" CACHE PATH "/usr/src/nvidia-595.71.05/nvidia/" FORCE)
 set (KERNEL "/lib/modules/${CMAKE_SYSTEM_VERSION}/build" CACHE PATH "Path to kernel source, or module directory")
 set (FIO "" CACHE PATH "Path to FIO installation")
 
@@ -65,7 +65,7 @@ if (CUDAToolkit_FOUND AND NOT no_cuda)
 
     # Try to find Nvidia headers (will choose the newest version)
     #file (GLOB_RECURSE driver_paths "/usr/src/nvidia-*/nv-p2p.h")
-    file (GLOB_RECURSE driver_paths "${NVIDIA}/nvidia/nv-p2p.h")
+    file (GLOB_RECURSE driver_paths "${NVIDIA}/nv-p2p.h")
     string (REPLACE "nv-p2p.h" "" driver_paths "${driver_paths}")
     if (driver_paths)
         list (REVERSE driver_paths)
@@ -87,6 +87,18 @@ if (CUDAToolkit_FOUND AND NOT no_cuda)
     else ()
         message(STATUS "Using NVIDIA driver found in ${driver_dir}")
     endif ()
+    # Force BAM to recognize that we want CUDA kernel module integration
+    #set(no_cuda OFF CACHE BOOL "Override no_cuda" FORCE)
+    #set(WITH_CUDA ON CACHE BOOL "Override WITH_CUDA" FORCE)
+
+    # Ensure the macro definitions are propagated everywhere
+    add_compile_definitions(_CUDA __CUDA__)
+
+    # Ensure the environment maps cleanly down to the independent Kbuild subprocess
+    set(ENV{KCFLAGS} "-D_CUDA -D__CUDA__")
+    set(ENV{EXTRA_CFLAGS} "-D_CUDA -D__CUDA__")
+    set(ENV{ccflags-y} "-D_CUDA -D__CUDA__")
+
 endif ()
 
 
@@ -167,7 +179,14 @@ endif ()
 
 
 if (CUDAToolkit_FOUND AND NOT no_cuda)
-    target_compile_definitions(libnvm PRIVATE _CUDA __CUDA__)
+    #target_compile_definitions(libnvm PRIVATE _CUDA __CUDA__)
+    add_compile_definitions(_CUDA __CUDA__)
+    # 2. Exports definitions to external Make/Kbuild subprocesses (kernel modules)
+    set(ENV{KCFLAGS} "-D_CUDA -D__CUDA__")
+    set(ENV{CFLAGS} "-D_CUDA -D__CUDA__")
+    set(ENV{ccflags-y} "-D_CUDA -D__CUDA__")
+else()
+    message(FATAL_ERROR "_CUDA not defined ${no_cuda} tookkit ${CUDAToolkit_FOUND}")
 endif ()
 
 # Set name of library
@@ -182,14 +201,28 @@ install (TARGETS libnvm DESTINATION "lib")
 
 # Create kernel module makefile
 if (NOT no_module)
-    if (CUDAToolkit_FOUND AND NOT no_cuda AND EXISTS "${driver_dir}/Module.symvers")
+    if (CUDAToolkit_FOUND AND NOT no_cuda)
+        # Force point directly to your system's valid driver symbol descriptor
+        #set (module_symbols "/var/lib/dkms/nvidia/595.71.05/${CMAKE_SYSTEM_VERSION}/x86_64/module/Module.symvers")
+        #set (module_symbols "/usr/src/linux-headers-${CMAKE_SYSTEM_VERSION}/Module.symvers")
+        set (module_symbols "/usr/src/nvidia-595.71.05/Module.symvers")
+        #set (module_symbols "/var/lib/dkms/nvidia/595.71.05/build/Module.symvers")
+
         set (module_ccflags "-D_CUDA -I${driver_include} -I${libnvm_root} -I${libnvm_root}/linux")
-        set (module_symbols "${driver_dir}/Module.symvers")
         message(STATUS "Configuring kernel module with CUDA")
     else ()
         set (module_ccflags "-I${libnvm_root} -I${libnvm_root}/linux")
         message(STATUS "Configuring kernel module without CUDA")
     endif ()
+
+    #if (CUDAToolkit_FOUND AND NOT no_cuda AND EXISTS "${driver_dir}/Module.symvers")
+    #    set (module_ccflags "-D_CUDA -I${driver_include} -I${libnvm_root} -I${libnvm_root}/linux")
+    #    set (module_symbols "${driver_dir}/Module.symvers")
+    #    message(STATUS "Configuring kernel module with CUDA")
+    #else ()
+    #    set (module_ccflags "-I${libnvm_root} -I${libnvm_root}/linux")
+    #    message(STATUS "Configuring kernel module without CUDA")
+    #endif ()
 
     configure_file ("${module_root}/Makefile.in" "${module_output}/Makefile" @ONLY)
 
